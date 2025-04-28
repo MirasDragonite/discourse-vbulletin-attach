@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 # name: discourse-vbulletin-attach
-# about: Converts vBulletin [ATTACH=JSON] tags to proper image tags and basic BBCode
-# version: 0.5
+# about: Converts vBulletin [ATTACH=JSON] tags to proper image tags
+# version: 0.4
 # authors: CPA Club Team
 # url: https://github.com/MirasDragonite/discourse-vbulletin-attach
 
@@ -10,46 +10,13 @@ after_initialize do
 
   module ::VBulletinAttachConverter
     def self.convert_attachments(text)
-      # Сначала преобразуем BB-коды
-      text = convert_bbcode(text)
-
-      # Потом обрабатываем [ATTACH=JSON]
+      # Обрабатываем [ATTACH=JSON] теги
       text = convert_attach_json(text)
 
-      # Потом обрабатываем [IMG2=JSON]
+      # Обрабатываем [IMG2=JSON] теги
       text = convert_img2_json(text)
 
-      text
-    end
-
-    # Метод для преобразования базовых BBCode ([B], [I], [U], [SIZE], [COLOR])
-    def self.convert_bbcode(text)
-      return text unless text.is_a?(String)
-
-      # [B] → <b>
-      text.gsub!(/\[B\](.*?)\[\/B\]/im, '<b>\1</b>')
-
-      # [I] → <i>
-      text.gsub!(/\[I\](.*?)\[\/I\]/im, '<i>\1</i>')
-
-      # [U] → <u>
-      text.gsub!(/\[U\](.*?)\[\/U\]/im, '<u>\1</u>')
-
-      # [SIZE=16px] → <span style="font-size:16px">
-      text.gsub!(/\[SIZE=(\d+px|\d+)\](.*?)\[\/SIZE\]/im) do
-        size = $1
-        inner = $2
-        "<span style=\"font-size:#{size}\">#{inner}</span>"
-      end
-
-      # [COLOR=#FF0000] → <span style="color:#FF0000">
-      text.gsub!(/\[COLOR=([#\w]+)\](.*?)\[\/COLOR\]/im) do
-        color = $1
-        inner = $2
-        "<span style=\"color:#{color}\">#{inner}</span>"
-      end
-
-      text
+      return text
     end
 
     # Метод для обработки [ATTACH=JSON] тегов
@@ -107,19 +74,28 @@ after_initialize do
     # Метод для обработки [IMG2=JSON] тегов
     def self.convert_img2_json(text)
       return text unless text.is_a?(String) && text.include?("[IMG2=JSON]")
-
+    
       text.gsub(/\[IMG2=JSON\](.*?)\[\/IMG2\]/m) do
         raw_json = $1
         raw_json.gsub!(/[“”]/, '"')
-
+    
         begin
           json = JSON.parse(raw_json)
-
+    
           src = json["src"] || ""
-          align_class = json["data-align"] && json["data-align"] != "none" ? " class=\"align-#{json["data-align"]}\"" : ""
-          size_class = json["data-size"] == "full" ? " class=\"full-size\"" : ""
-
-          img_tag = %Q{<img src="#{src}"#{align_class}#{size_class}>}
+          classes = []
+    
+          if json["data-align"] && json["data-align"] != "none"
+            classes << "align-#{json["data-align"]}"
+          end
+    
+          if json["data-size"] == "full"
+            classes << "full-size"
+          end
+    
+          class_attr = classes.any? ? " class=\"#{classes.join(' ')}\"" : ""
+    
+          img_tag = %Q{<img src="#{src}"#{class_attr}>}
           img_tag
         rescue => e
           "[IMG2 parse error: #{e.message.gsub(/[<>]/, '')}]"
