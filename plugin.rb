@@ -1,51 +1,21 @@
-# frozen_string_literal: true
 # name: discourse-vbulletin-attach
-# about: Converts vBulletin [ATTACH=JSON] tags to proper image tags
-# version: 0.4
-# authors: CPA Club Team
-# url: https://github.com/MirasDragonite/discourse-vbulletin-attach
+# about: Заменяет [ATTACH=JSON] на <img> при сохранении и рендере
+# version: 0.1
 
 after_initialize do
   require 'json'
 
   module ::VBulletinAttachConverter
     def self.convert_attachments(text)
-      # Обрабатываем [ATTACH=JSON] теги
-      text = convert_attach_json(text)
-
-      # Обрабатываем [IMG2=JSON] теги
-      text = convert_img2_json(text)
-
-      return text
-    end
-
-    # Метод для обработки [ATTACH=JSON] тегов
-    def self.convert_attach_json(text)
-      return text unless text.is_a?(String) && text.include?("[ATTACH=JSON]")
+      return text unless text&.include?("[ATTACH=JSON]")
 
       text.gsub(/\[ATTACH=JSON\](.*?)\[\/ATTACH\]/m) do
         raw_json = $1
-        raw_json.gsub!(/[“”]/, '"')
-
         begin
           json = JSON.parse(raw_json)
 
           alt = json["alt"] || ""
-          title = json["title"] || ""
-
-          filename = nil
-
-          if title.present?
-            filename = title.strip
-          end
-
-          if !filename && alt.present?
-            name_match = alt.match(/Название:\s*([^\.]+\.[^\s]+)/u) || 
-                         alt.match(/Название:\s*([^\s]+)/u)
-            filename = name_match[1] if name_match
-          end
-
-          filename ||= "unknown.png"
+          filename = alt[/Название:\s*(.+?)\s/u, 1] || "unknown.png"
 
           upload = Upload.find_by(original_filename: filename)
 
@@ -54,110 +24,34 @@ after_initialize do
             height = json["height"] || upload.height
             src = upload.url
 
-            align_class = ""
-            if json["data-align"] && json["data-align"] != "none"
-              align_class = " class=\"align-#{json["data-align"]}\""
-            end
-
-            img_tag = %Q{<img src="#{src}" alt="#{CGI.escapeHTML(filename)}" width="#{width}" height="#{height}"#{align_class}>}
-            img_tag
+            %Q{<img src="#{src}" alt="#{filename}" width="#{width}" height="#{height}">}
           else
-            message = "[ATTACH: #{filename} (ID: #{json["data-attachmentid"] || 'unknown'}) not found]"
-            message
+            "<!-- Attachment '#{filename}' not found -->"
           end
         rescue => e
-          "[ATTACH parse error: #{e.message.gsub(/[<>]/, '')}]"
-        end
-      end
-    end
-
-    # Метод для обработки [IMG2=JSON] тегов
-    def self.convert_img2_json(text)
-      return text unless text.is_a?(String) && text.include?("[IMG2=JSON]")
-    
-      text.gsub(/\[IMG2=JSON\](.*?)\[\/IMG2\]/m) do
-        raw_json = $1
-        raw_json.gsub!(/[“”]/, '"')
-    
-        begin
-          json = JSON.parse(raw_json)
-    
-          src = json["src"] || ""
-          classes = []
-    
-          if json["data-align"] && json["data-align"] != "none"
-            classes << "align-#{json["data-align"]}"
-          end
-    
-          if json["data-size"] == "full"
-            classes << "full-size"
-          end
-    
-          class_attr = classes.any? ? " class=\"#{classes.join(' ')}\"" : ""
-    
-          img_tag = %Q{<img src="#{src}"#{class_attr}>}
-          img_tag
-        rescue => e
-          "[IMG2 parse error: #{e.message.gsub(/[<>]/, '')}]"
+          "<!-- ATTACH parse error: #{e.message} -->"
         end
       end
     end
   end
 
-  # Обработка при создании поста
-  on(:before_post_create) do |post, params|
-    if params[:raw]&.include?("[ATTACH=JSON]") || params[:raw]&.include?("[IMG2=JSON]")
-      begin
-        params[:raw] = ::VBulletinAttachConverter.convert_attachments(params[:raw])
-      rescue => e
-        Rails.logger.error("VBulletinAttachConverter before_post_create error: #{e.message}")
-      end
-    end
-  end
-  
-  # Обработка при редактировании
-  on(:before_post_update) do |post, params|
-    if params[:raw]&.include?("[ATTACH=JSON]") || params[:raw]&.include?("[IMG2=JSON]")
-      begin
-        params[:raw] = ::VBulletinAttachConverter.convert_attachments(params[:raw])
-      rescue => e
-        Rails.logger.error("VBulletinAttachConverter before_post_update error: #{e.message}")
+  # 🔁 При сохранении поста — заменяем в raw
+  class ::Post
+    before_save do
+      if self.raw&.include?("[ATTACH=JSON]")
+        self.raw = ::VBulletinAttachConverter.convert_attachments(self.raw)
       end
     end
   end
 
-  # При отображении существующего поста
-  on(:post_process_cooked) do |doc, post|
-    if post.raw&.include?("[ATTACH=JSON]") || post.raw&.include?("[IMG2=JSON]")
-      begin
-        new_raw = ::VBulletinAttachConverter.convert_attachments(post.raw)
-        if new_raw != post.raw
-          post.update_column(:raw, new_raw)
-          post.rebake!
-        end
-      rescue => e
-        Rails.logger.error("VBulletinAttachConverter post_process_cooked error: #{e.message}")
-      end
-    end
-  end
+  # 🧾 При рендере поста (на всякий случай)
+  module ::PrettyText
+    class << self
+      alias_method :original_cook, :cook
 
-  # Для рендеринга
-  plugin = self
-  reloadable_patch do
-    module ::PrettyText
-      class << self
-        alias_method :original_cook_without_vbulletin_attach, :cook unless method_defined?(:original_cook_without_vbulletin_attach)
-        
-        def cook(text, opts = {})
-          if text.is_a?(String) && (text.include?("[ATTACH=JSON]") || text.include?("[IMG2=JSON]"))
-            begin
-              text = ::VBulletinAttachConverter.convert_attachments(text)
-            rescue => e
-              Rails.logger.error("VBulletinAttachConverter cook error: #{e.message}")
-            end
-          end
-          original_cook_without_vbulletin_attach(text, opts)
-        end
+      def cook(text, opts = {})
+        result = original_cook(text, opts)
+        ::VBulletinAttachConverter.convert_attachments(result)
       end
     end
   end
