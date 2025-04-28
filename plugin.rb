@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 # name: discourse-vbulletin-attach
-# about: Converts vBulletin [ATTACH=JSON] tags to proper image tags
-# version: 0.4
+# about: Converts vBulletin [ATTACH=JSON] tags to proper image tags and basic BBCode
+# version: 0.5
 # authors: CPA Club Team
 # url: https://github.com/MirasDragonite/discourse-vbulletin-attach
 
@@ -10,13 +10,46 @@ after_initialize do
 
   module ::VBulletinAttachConverter
     def self.convert_attachments(text)
-      # Обрабатываем [ATTACH=JSON] теги
+      # Сначала преобразуем BB-коды
+      text = convert_bbcode(text)
+
+      # Потом обрабатываем [ATTACH=JSON]
       text = convert_attach_json(text)
 
-      # Обрабатываем [IMG2=JSON] теги
+      # Потом обрабатываем [IMG2=JSON]
       text = convert_img2_json(text)
 
-      return text
+      text
+    end
+
+    # Метод для преобразования базовых BBCode ([B], [I], [U], [SIZE], [COLOR])
+    def self.convert_bbcode(text)
+      return text unless text.is_a?(String)
+
+      # [B] → <b>
+      text.gsub!(/\[B\](.*?)\[\/B\]/im, '<b>\1</b>')
+
+      # [I] → <i>
+      text.gsub!(/\[I\](.*?)\[\/I\]/im, '<i>\1</i>')
+
+      # [U] → <u>
+      text.gsub!(/\[U\](.*?)\[\/U\]/im, '<u>\1</u>')
+
+      # [SIZE=16px] → <span style="font-size:16px">
+      text.gsub!(/\[SIZE=(\d+px|\d+)\](.*?)\[\/SIZE\]/im) do
+        size = $1
+        inner = $2
+        "<span style=\"font-size:#{size}\">#{inner}</span>"
+      end
+
+      # [COLOR=#FF0000] → <span style="color:#FF0000">
+      text.gsub!(/\[COLOR=([#\w]+)\](.*?)\[\/COLOR\]/im) do
+        color = $1
+        inner = $2
+        "<span style=\"color:#{color}\">#{inner}</span>"
+      end
+
+      text
     end
 
     # Метод для обработки [ATTACH=JSON] тегов
